@@ -34,6 +34,8 @@ class LSTM(nn.Module):
             nn.Linear(embedding_size, vocabulary_size, bias=False),
         )
 
+        self.loss_module = nn.NLLLoss(ignore_index=-10, reduction="none")
+
         # Tying classifier and embedding weights (similar to GPT-1)
         self.classifier[2].weight = self.embedding.weight
 
@@ -72,10 +74,10 @@ class LSTM(nn.Module):
             - c (`torch.FloatTensor` of shape `(num_layers, batch_size, hidden_size)`)
         """
 
-        # ==========================
-        # TODO: Write your code here
-        # ==========================
-        pass
+        output, hidden_states = self.lstm(self.embedding(inputs), hidden_states)
+        logits = self.classifier(output)
+        log_proba = torch.nn.functional.log_softmax(logits, dim=-1)
+        return log_proba, hidden_states
 
     def loss(self, log_probas, targets, mask):
         """Loss function.
@@ -103,10 +105,9 @@ class LSTM(nn.Module):
             The scalar loss, corresponding to the (mean) negative log-likelihood.
         """
 
-        # ==========================
-        # TODO: Write your code here
-        # ==========================
-        pass
+        targets[mask != 1] = -10
+
+        return torch.mean(torch.sum(self.loss_module(log_probas.permute(0, 2, 1), targets), dim=-1) / torch.sum(mask, dim=-1))
 
     def initial_states(self, batch_size, device=None):
         if device is None:
