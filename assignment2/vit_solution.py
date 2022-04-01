@@ -56,9 +56,13 @@ class MultiHeadedAttention(nn.Module):
         self.d_k = head_size
         self.h = num_heads
         
+        # 256x256
         self.q_linear = nn.Linear(self.d_model, self.d_model)
+        # 256x256
         self.v_linear = nn.Linear(self.d_model, self.d_model)
+        # 256x256
         self.k_linear = nn.Linear(self.d_model, self.d_model)
+        # 256x256
         self.out = nn.Linear(self.d_model, self.d_model)
 
     def get_attention_weights(self, queries, keys):
@@ -228,27 +232,19 @@ class MultiHeadedAttention(nn.Module):
             sequences in the batch, and all positions in each sequence.
         """
 
-        bs = hidden_states.size(0)
+        batch_size = hidden_states.shape[0]
         
-        # perform linear operation and split into h heads
+        k = self.k_linear(hidden_states).view(batch_size, -1, self.h, self.d_k)
+        q = self.q_linear(hidden_states).view(batch_size, -1, self.h, self.d_k)
+        v = self.v_linear(hidden_states).view(batch_size, -1, self.h, self.d_k)
         
-        k = self.k_linear(hidden_states).view(bs, -1, self.h, self.d_k)
-        q = self.q_linear(hidden_states).view(bs, -1, self.h, self.d_k)
-        v = self.v_linear(hidden_states).view(bs, -1, self.h, self.d_k)
-        
-        # transpose to get dimensions bs * h * sl * d_model
-       
         k = k.transpose(1, 2)
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        # calculate attention using function we will define next
-        scores = self.apply_attention(q, k, v)
+        out = self.apply_attention(q, k, v)
         
-        # concatenate heads and put through final linear layer
-        concat = scores.transpose(1,2).contiguous().view(bs, -1, self.d_model)
-        
-        output = self.out(concat)
+        output = self.out(out.transpose(1,2).contiguous().view(batch_size, -1, self.d_model))
     
         return output
 
@@ -309,6 +305,7 @@ class PreNormAttentionBlock(nn.Module):
         
         self.layer_norm_1 = LayerNorm(embed_dim)
         self.attn = MultiHeadedAttention(embed_dim//num_heads, num_heads,sequence_length)
+        print(sum(p.numel() for p in self.attn.parameters() if p.requires_grad))
         self.layer_norm_2 = LayerNorm(embed_dim)
         self.linear = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
@@ -354,7 +351,6 @@ class VisionTransformer(nn.Module):
         #Adding the cls token to the sequnence 
         self.sequence_length= 1+ num_patches
         # Layers/Networks
-        print(dropout)
         self.input_layer = nn.Linear(num_channels*(patch_size**2), embed_dim)
         if block =='prenorm':
           self.transformer = nn.Sequential(*[PreNormAttentionBlock(embed_dim, hidden_dim, num_heads,self.sequence_length, dropout=dropout) for _ in range(num_layers)])

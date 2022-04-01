@@ -19,7 +19,7 @@ from torchvision import transforms
 from vit_solution import VisionTransformer
 
 from utils.torch_utils import seed_experiment, to_device
-#from utils.data_utils import save_logs
+from utils.data_utils import save_logs
 
 """
 # Configs to run
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     data = parser.add_argument_group("Data")
     
     data.add_argument(
-        "--batch_size", type=int, default=48, help="batch size (default: %(default)s)."
+        "--batch_size", type=int, default=128, help="batch size (default: %(default)s)."
     )
 
     model = parser.add_argument_group("Model")
@@ -350,4 +350,7 @@ if __name__ == "__main__":
         )
 
     logs = main(args)
-    #Reuse the save logs function in utils to your needs if needed.
+
+    # Log experiment data
+    if args.log is not None:
+        save_logs(args, *logs)

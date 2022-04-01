@@ -6,6 +6,8 @@ import torch
 import urllib.request
 import numpy as np
 import torch.optim as optim
+import matplotlib.pyplot as plt
+plt.tight_layout()
 
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -29,7 +31,6 @@ from utils.data_utils import save_logs
 6. python run_exp.py --model lstm --layers 4 --batch_size 16 --log --epochs 10 --optimizer adamw
 
 """
-
 
 def train(epoch, model, dataloader, optimizer, args):
 

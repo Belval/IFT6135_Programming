@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import matplotlib.pyplot as plt
 
 
 class BassetDataset(Dataset):
@@ -131,8 +132,6 @@ class Basset(nn.Module):
         self.bn5 = nn.BatchNorm1d(1000)
 
         self.fc3 = nn.Linear(1000, self.num_cell_types)
-
-        #self.net.to("cuda")
 
     def forward(self, x):
         """
@@ -296,17 +295,51 @@ def compute_auc_untrained_model(model, dataloader, device):
       (compute time should not be as much of a consideration here)
     """
 
-    model.to(device)
+    model.to(device).eval()
 
-    outputs, targets = [], []
-    for batch in dataloader:
-        out = model(batch['sequence'].to(device)).sigmoid().detach().cpu()
-        target = batch['target'].detach().cpu()
-        outputs.append(out)
-        targets.append(target)
+    with torch.no_grad():
+        outputs, targets = [], []
+        for batch in dataloader:
+            out = model(batch['sequence'].to(device)).sigmoid().detach().cpu()
+            target = batch['target'].detach().cpu()
+            outputs.append(out)
+            targets.append(target)
 
-    return compute_auc(torch.cat(targets, dim=0).numpy(), torch.cat(outputs, dim=0).numpy())
+    return compute_auc(torch.cat(targets, dim=0).flatten().numpy() == 1.0, torch.cat(outputs, dim=0).flatten().numpy())
 
+def compute_roc_curve_and_auc_model(model, dataloader, device, epoch=0, title=""):
+    model.to(device).eval()
+
+    with torch.no_grad():
+        outputs, targets = [], []
+        for batch in dataloader:
+            out = model(batch['sequence'].to(device)).sigmoid().detach().cpu()
+            target = batch['target'].detach().cpu()
+            outputs.append(out)
+            targets.append(target)
+
+    y_true = torch.cat(targets, dim=0).flatten().numpy() == 1.0
+    y_pred = torch.cat(outputs, dim=0).flatten().numpy()
+
+    resolution = 20
+
+    fpr_acc, tpr_acc = [], []
+    for i in range(resolution):
+        fpr, tpr = list(compute_fpr_tpr(y_true=y_true, y_pred=y_pred > (i * (1 / resolution))).values())
+        fpr_acc.append(fpr)
+        tpr_acc.append(tpr)
+
+    auc = np.abs(np.trapz(tpr_acc, fpr_acc))
+
+    plt.plot(fpr_acc, tpr_acc, label=f"AUC: {round(auc, 3)}")
+    plt.title(title)
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.legend(loc="lower right")
+    plt.savefig(f"roc_curve_{epoch}.png")
+    plt.close()
+
+    return auc
 
 def compute_auc(y_true, y_model):
     """
@@ -323,7 +356,7 @@ def compute_auc(y_true, y_model):
     """
     output = {'auc': 0.}
 
-    resolution = 100
+    resolution = 20
 
     fpr_acc, tpr_acc = [], []
     for i in range(resolution):
@@ -331,7 +364,7 @@ def compute_auc(y_true, y_model):
         fpr_acc.append(fpr)
         tpr_acc.append(tpr)
 
-    output['auc'] = sum([(fpr_acc[i] - fpr_acc[i + 1]) * tpr_acc[i] for i in range(resolution - 1)])
+    output['auc'] = np.abs(np.trapz(tpr_acc, fpr_acc))
 
     return output
 
@@ -373,13 +406,15 @@ def train_loop(model, train_dataloader, device, optimizer, criterion):
     output = {'total_score': 0.,
               'total_loss': 0.}
 
+    model.train()
+
     for batch in train_dataloader:
-        out = model(batch['sequence'])
-        target = batch['target']
+        out = model(batch['sequence'].to(device))
+        target = batch['target'].to(device)
         
         loss = criterion(out, target)
 
-        output['total_score'] += compute_auc(target.numpy(), out.sigmoid().detach().numpy())["auc"]
+        output['total_score'] += compute_auc(target.cpu().flatten().numpy(), out.sigmoid().detach().cpu().flatten().numpy())["auc"]
         output['total_loss'] += loss.detach()
 
         optimizer.zero_grad()
@@ -419,14 +454,14 @@ def valid_loop(model, valid_dataloader, device, optimizer, criterion):
     targets, outputs = [], []
     with torch.no_grad():
         for batch in valid_dataloader:
-            out = model(batch['sequence'])
-            target = batch['target']
+            out = model(batch['sequence'].to(device))
+            target = batch['target'].to(device)
             outputs.append(out.sigmoid())
             targets.append(target)
             loss = criterion(out, target)
 
             output['total_loss'] += loss.detach()
-        output['total_score'] = compute_auc(torch.cat(targets, dim=0).numpy(), torch.cat(outputs, dim=0).numpy())
+        output['total_score'] = compute_auc(torch.cat(targets, dim=0).cpu().flatten().numpy(), torch.cat(outputs, dim=0).cpu().flatten().numpy())['auc']
 
     return output['total_score'], output['total_loss']
 
@@ -442,8 +477,8 @@ if __name__ == '__main__':
     import solution
 
     # The hyperparameters we will use
-    batch_size = 64
-    learning_rate = 0.002
+    batch_size = 128
+    learning_rate = 0.01
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -469,21 +504,21 @@ if __name__ == '__main__':
                                         batch_size=batch_size,
                                         drop_last=True,
                                         shuffle=True,
-                                        num_workers=4)
+                                        num_workers=12)
     basset_dataloader_valid = DataLoader(basset_dataset_valid,
                                         batch_size=batch_size,
                                         drop_last=True,
                                         shuffle=False,
-                                        num_workers=4)
+                                        num_workers=12)
     basset_dataloader_test = DataLoader(basset_dataset_test,
                                         batch_size=batch_size,
                                         drop_last=True,
                                         shuffle=False,
-                                        num_workers=4)
+                                        num_workers=12)
 
     basset_dataset_train.get_seq_len()
 
-    model = solution.Basset()#.to(device)
+    model = solution.Basset().to(device)
 
     #solution.compute_fpr_tpr_dumb_model()
 
@@ -493,21 +528,25 @@ if __name__ == '__main__':
 
     #b = solution.compute_auc_untrained_model(model, basset_dataloader_test, device)
 
+    auc = compute_roc_curve_and_auc_model(model, basset_dataloader_test, device, epoch=1000, title="Untrained Model ROC curve")
+    print(auc)
+
     criterion = solution.get_critereon()
 
     optimizer = optim.Adam(list(model.parameters()), lr=learning_rate, betas=(0.9, 0.999))
 
     valid_score_best = 0
-    patience = 2
-    num_epochs = 5  # you don't need to train this for that long!
+    patience = 5
+    num_epochs = 10  # you don't need to train this for that long!
 
     for e in range(num_epochs):
-        #train_score, train_loss = solution.train_loop(model, basset_dataloader_train, device, optimizer, criterion)
+        train_score, train_loss = solution.train_loop(model, basset_dataloader_train, device, optimizer, criterion)
         valid_score, valid_loss = solution.valid_loop(model, basset_dataloader_valid, device, optimizer, criterion)
 
-        print('epoch {}: loss={:.3f} score={:.3f}'.format(e,
-                                                        valid_loss,
-                                                        valid_score))
+        auc = compute_roc_curve_and_auc_model(model, basset_dataloader_test, device, epoch=e, title="Trained Model ROC curve")
+        print(auc)
+
+        print(f'epoch {e}: loss={valid_loss} score={valid_score}')
 
         if valid_score > valid_score_best:
             print('Best score: {}. Saving model...'.format(valid_score))
